@@ -22,10 +22,11 @@ def initialize_ai():
     retriever = db.as_retriever(search_kwargs={"k": 4}) 
     
     # Connect to the free Gemini LLM
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key="AIzaSyABemVGFRtOHMFFmM0PeX3UnHd0zbk3OiU", # <--- PASTE YOUR API KEY HERE
-        temperature=0.3
+  llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash",  # You can try "gemini-pro" if this still fails
+        google_api_key=st.secrets["GOOGLE_API_KEY"],
+        temperature=0.3,
+        convert_system_message_to_human=True # This adds extra stability
     )
     
     # Give the AI its personality
