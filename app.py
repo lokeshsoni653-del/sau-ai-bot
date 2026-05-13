@@ -1,5 +1,5 @@
 import streamlit as st
-import time
+import os
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,20 +13,23 @@ st.image("https://sau.edu.pk/wp-content/uploads/2023/10/SAU-Logo-1.png", width=1
 st.title("🎓 Sindh Agriculture University AI Bot")
 st.markdown("Ask me anything about admissions, departments, or life at SAU Tandojam!")
 
-# 2. Setup the AI Engine & Database (Modern LCEL Architecture)
+# 2. Setup the AI Engine & Database
 @st.cache_resource
 def initialize_ai():
+    # Force the API key into the system environment
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+    
     # Load the local database
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     db = Chroma(persist_directory="./sau_db", embedding_function=embeddings)
     retriever = db.as_retriever(search_kwargs={"k": 4}) 
     
-    # Connect to the free Gemini LLM
-  llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",  # You can try "gemini-pro" if this still fails
-        google_api_key=st.secrets["GOOGLE_API_KEY"],
+    # Connect to the Gemini LLM
+    # NOTE: If gemini-1.5-flash still gives a 404, change it to "gemini-pro"
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash",
         temperature=0.3,
-        convert_system_message_to_human=True # This adds extra stability
+        convert_system_message_to_human=True
     )
     
     # Give the AI its personality
@@ -42,11 +45,10 @@ def initialize_ai():
     Answer:"""
     prompt = PromptTemplate.from_template(template)
     
-    # Helper function to format the retrieved documents
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
     
-    # The Modern LCEL Chain (Bypasses the broken 'langchain.chains' module entirely!)
+    # The Modern LCEL Chain
     rag_chain = (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | prompt
@@ -55,7 +57,12 @@ def initialize_ai():
     )
     return rag_chain
 
-rag_chain = initialize_ai()
+# Initialize the chain
+try:
+    rag_chain = initialize_ai()
+except Exception as e:
+    st.error(f"Error initializing AI: {e}")
+    st.stop()
 
 # 3. Chat Interface Logic
 if "messages" not in st.session_state:
@@ -74,8 +81,10 @@ if prompt := st.chat_input("E.g., What are the criteria for BS Software Engineer
     # Generate AI Response
     with st.chat_message("assistant"):
         with st.spinner("Searching SAU database..."):
-            # Invoke the chain directly with the user's string
-            answer = rag_chain.invoke(prompt)
-            st.markdown(answer)
-            
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+            try:
+                answer = rag_chain.invoke(prompt)
+                st.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+            except Exception as e:
+                st.error("I'm having trouble connecting to the AI server. Please try again in a moment.")
+                st.info(f"Technical details: {e}")
