@@ -1,70 +1,30 @@
 import streamlit as st
-import os
+import google.generativeai as genai
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 
-# 1. Page Config & Branding
-st.set_page_config(page_title="SAU AI Assistant", page_icon="🎓", layout="centered")
-st.image("https://sau.edu.pk/wp-content/uploads/2023/10/SAU-Logo-1.png", width=150)
-st.title("🎓 Sindh Agriculture University AI Bot")
-st.markdown("Ask me anything about admissions, departments, or life at SAU Tandojam!")
+# 1. Page Setup
+st.set_page_config(page_title="SAU AI Assistant", page_icon="🎓")
+st.title("🎓 SAU AI Bot (Stable Version)")
 
-# 2. Setup the AI Engine & Database
+# 2. Load YOUR Local Database (The Textbook)
 @st.cache_resource
-def initialize_ai():
-    # Force the API key into the system environment
-    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-    
-    # Load the local database
+def load_knowledge_base():
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     db = Chroma(persist_directory="./sau_db", embedding_function=embeddings)
-    retriever = db.as_retriever(search_kwargs={"k": 4}) 
-    
-    # Connect to the Gemini LLM
-    # NOTE: If gemini-1.5-flash still gives a 404, change it to "gemini-pro"
-    llm = ChatGoogleGenerativeAI(
-        model="models/gemini-1.5-flash", # <--- Add "models/" at the start
-        temperature=0.3,
-        convert_system_message_to_human=True
-    )
-    
-    # Give the AI its personality
-    template = """You are the official AI Assistant for Sindh Agriculture University (SAU), Tando Jam.
-    Use the following retrieved context to answer the user's question accurately. 
-    If the answer is not in the context, politely say that you don't have that information.
-    Keep your answers helpful, professional, and concise.
+    return db
 
-    Context:
-    {context}
+db = load_knowledge_base()
 
-    Question: {question}
-    Answer:"""
-    prompt = PromptTemplate.from_template(template)
-    
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-    
-    # The Modern LCEL Chain
-    rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    return rag_chain
-
-# Initialize the chain
+# 3. Setup Google's Brain (The Librarian)
+# This uses the official Google library which is much more stable than LangChain
 try:
-    rag_chain = initialize_ai()
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"Error initializing AI: {e}")
-    st.stop()
+    st.error("API Key not found in Streamlit Secrets!")
 
-# 3. Chat Interface Logic
+# 4. Chat Interface
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -72,19 +32,33 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Capture User Input
-if prompt := st.chat_input("E.g., What are the criteria for BS Software Engineering?"):
+if prompt := st.chat_input("Ask about SAU Admissions, Fees, or Departments..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate AI Response
     with st.chat_message("assistant"):
-        with st.spinner("Searching SAU database..."):
+        # STEP A: Search your local database for facts
+        with st.spinner("Searching SAU Database..."):
+            docs = db.similarity_search(prompt, k=4)
+            context = "\n".join([d.page_content for d in docs])
+        
+        # STEP B: Send those facts to Gemini to summarize
+        with st.spinner("AI is thinking..."):
+            system_prompt = f"""
+            You are the official SAU AI Assistant. 
+            Answer the user's question using ONLY the following context:
+            {context}
+            
+            If the answer isn't in the context, say 'I don't have that specific information in my database.'
+            """
             try:
-                answer = rag_chain.invoke(prompt)
+                response = model.generate_content(f"{system_prompt}\n\nUser Question: {prompt}")
+                answer = response.text
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
             except Exception as e:
-                st.error("I'm having trouble connecting to the AI server. Please try again in a moment.")
-                st.info(f"Technical details: {e}")
+                st.error(f"The AI Brain failed to respond. Technical Error: {e}")
+                # "SAFE MODE": If the brain fails, show the raw facts from your DB anyway!
+                st.warning("Showing raw data from database since AI Brain is offline:")
+                st.write(context)
