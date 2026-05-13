@@ -27,7 +27,7 @@ def initialize_ai():
     # Connect to the Gemini LLM
     # NOTE: If gemini-1.5-flash still gives a 404, change it to "gemini-pro"
     llm = ChatGoogleGenerativeAI(
-        model="gemini-pro",
+        model="models/gemini-1.5-flash", # <--- Add "models/" at the start
         temperature=0.3,
         convert_system_message_to_human=True
     )
