@@ -1,9 +1,11 @@
 streamlit
-langchain
+langchain>=0.2.0
 langchain-community
 langchain-core
-langchain-google-genai
+langchain-google-genai>=1.0.3
+google-generativeai>=0.5.2
 chromadb
 sentence-transformers
 beautifulsoup4
 protobuf<5
+torchvision
