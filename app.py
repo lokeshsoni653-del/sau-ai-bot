@@ -1,54 +1,51 @@
 import streamlit as st
-import google.generativeai as genai
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+import os
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
 
-# 1. Branding
+# 1. Setup API Key
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+
+# 2. UI and Branding
 st.set_page_config(page_title="SAU AI Assistant", page_icon="🎓")
-st.title("🎓 SAU AI Assistant")
+st.title("🎓 Sindh Agriculture University Digital Assistant")
 
-# 2. Load Local Database (The "Textbook")
-@st.cache_resource
-def load_db():
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    return Chroma(persist_directory="./sau_db", embedding_function=embeddings)
-
-db = load_db()
-
-# 3. Setup AI Brain (The "Student")
+# 3. Load the Text Database
 try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # We use 'gemini-1.5-flash' - the newest and fastest
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"Setup Error: {e}")
+    with open("sau_data.txt", "r", encoding="utf-8") as file:
+        sau_data = file.read()
+except FileNotFoundError:
+    sau_data = ""
+    st.warning("Please upload 'sau_data.txt' to your GitHub repository.")
 
-# 4. Chat logic
+# 4. Initialize Groq (Ultra-fast Llama 3)
+llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful digital assistant for Sindh Agriculture University (SAU), Tando Jam. Use ONLY this official data to answer questions:\n\n{context}\n\nIf the answer is not in the data, say you don't know."),
+    ("human", "{input}")
+])
+
+chain = prompt | llm
+
+# 5. Chat Interface Logic
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask about SAU..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+if user_input := st.chat_input("Ask a question about SAU:"):
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
+    st.session_state.messages.append({"role": "user", "content": user_input})
 
     with st.chat_message("assistant"):
-        # Search the local database for SAU facts
-        docs = db.similarity_search(prompt, k=4)
-        context = "\n".join([d.page_content for d in docs])
-        
-        # Build the final prompt
-        full_query = f"Using this info:\n{context}\n\nAnswer this: {prompt}"
-        
         try:
-            response = model.generate_content(full_query)
-            answer = response.text
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+            with st.spinner("Searching SAU records..."):
+                response = chain.invoke({"context": sau_data, "input": user_input})
+                st.markdown(response.content)
+                st.session_state.messages.append({"role": "assistant", "content": response.content})
         except Exception as e:
-            st.error("AI Brain Offline. Here is the data from the SAU Database:")
-            st.info(context) # This shows the raw SAU data so you can still present!
+            st.error(f"Error connecting to the Groq server: {str(e)}")
